@@ -10,15 +10,15 @@
 ## Our idea is to incorporate an accent encoding network into the system described above. We plan to implement this proposal as summarized in the following diagram.
 ![Proposal.png](Proposal.png)
 
-## The bottom part of the above figure depicts our accent encoding netowrk. The Accent Encoder works in a similar fashion to the Speaker Encoder. The Speaker network tries to map a sequence of log-mel spectorgram frames, from the speech, to a fixed dimensional embedding vector called d-vector. This d-vector can be used to uniquely identify the speaker. Similarly, we hope to train an encoder that learns an user specific accent embedding, which can be used in an identical fashion to the speaker encoder network in the paper to generate accented speech.
+## The bottom part of the above figure depicts our accent encoding network. The Accent Encoder works in a similar fashion to the Speaker Encoder. The Speaker network tries to map a sequence of log-mel spectorgram frames, from the speech, to a fixed dimensional embedding vector called d-vector. This d-vector can be used to uniquely identify the speaker. Similarly, we hope to train an encoder that learns an user specific accent embedding, which can be used in an identical fashion to the speaker encoder network in the paper to generate accented speech.
 
 ## Planned Timeline:
-| Week | Planned Work                                                              |
-|------|---------------------------------------------------------------------------|
-| 1    | Identify relevant datasets                                                |
-| 2    | Grouping and Preprocessing data from multiple sources                     |
-| 2-3  | Designing the Accent Encoder Model                                        |
-| 3-4  | Implement a working model that can encode at least 1 accent on train data |
-| 5-6  | Extend the model for multiple accents and generalization                  |
-| 6    | Draft Report                                                              |
-| 7    | Final Report                                                              |
+| Week | Planned Work                                                                 |
+|------|------------------------------------------------------------------------------|
+| 1    | Identify relevant datasets                                                   |
+| 2    | Grouping and Preprocessing data from multiple sources                        |
+| 2-3  | Designing the Accent Encoder Model                                           |
+| 3-4  | Implement a working model that can encode at least 1 accent on training data |
+| 5-6  | Extend the model for multiple accents and generalization                     |
+| 6    | Draft Report                                                                 |
+| 7    | Final Report                                                                 |
