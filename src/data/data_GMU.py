@@ -88,14 +88,13 @@ def preprocess_GMU():
         try:
             aud = preprocess(fname)
         except AssertionError as e:
-            print("Coudn't process ", len(aud), fname)
-
+            print("Couldn't process ", len(aud), fname)
         # file_out_ = fname.split('.')[0].replace(
         #     RAW_DATA_DIR, INTERIM_DATA_DIR) + '_' + AUDIO_WRITE_FORMAT
 
         # soundfile.write(file_out_, aud, SAMPLING_RATE)
-        
-        mel = mel_spectogram(aud)
+
+        mel = mel_spectogram(aud).T
 
         mel_spects_[lang].append((name, mel))
 

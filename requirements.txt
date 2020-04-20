@@ -19,3 +19,4 @@ tqdm
 h5py
 matplotlib
 soundfile
+tensorboard

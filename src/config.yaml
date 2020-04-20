@@ -6,6 +6,7 @@ INTERIM_DATA_DIR : 'data/interim/'
 MODEL_SAVE_DIR : 'models_/'
 VIS_PREDS_DIR : 'data/vis/'
 CMP_FMT : '.tar.bz2'
+RUNS_DIR : 'runs/'
 
 GMU_DATA_PACKED : 'data/raw/speech-accent-archive.zip'
 GMU_DATA_INFO : 'data/raw/speech-accent-archive/speakers_all.csv'
@@ -20,3 +21,11 @@ MEL_CHANNELS : 40
 SMOOTHING_WSIZE : 30
 SMOOTHING_LENGTH : 6
 DBFS : -30
+HIDDEN_SIZE : 128
+EMBEDDING_SIZE : 64
+PROJECTION_SIZE : 64
+NUM_LAYERS : 3
+SLIDING_WIN_SIZE : 160 # frames
+SLIDING_WIN_OVERLAP : 0.5
+UTTR_COUNT : 8
+BATCH_SIZE : 32

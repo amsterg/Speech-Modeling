@@ -19,6 +19,11 @@ from tqdm import tqdm
 import warnings
 import h5py
 import matplotlib.pyplot as plt
+from torch.utils import data
+import torch
+from random import randint, sample
+from yaml import safe_load
+
 warnings.filterwarnings("ignore")
 
 with open('src/config.yaml', 'r') as f:
@@ -141,5 +146,53 @@ def mel_spectogram(aud):
     return mel
 
 
+class HDF5TorchDataset(data.Dataset):
+    def __init__(self, accent_data, device=torch.device('cpu')):
+        hdf5_file = os.path.join(PROC_DATA_DIR, '{}.hdf5'.format(accent_data))
+        self.hdf5_file = h5py.File(hdf5_file, 'r')
+        self.accents = self.hdf5_file.keys()
+        with open('src/config.yaml', 'r') as f:
+            self.config = safe_load(f.read())
+        self.device = device
+
+    def __len__(self):
+        return 10000000
+
+    def _get_acc_uttrs(self):
+        tensors = []
+        rand_wavs = [
+            sample(list(self.hdf5_file[accent].values()), 1)[0]
+            for accent in self.accents
+        ]
+        rand_uttrs_accs = []
+        rand_uttrs = []
+
+        for wav in rand_wavs:
+            rand_uttrs = []
+            for _ in range(self.config['UTTR_COUNT']):
+
+                rix = randint(0,
+                              wav.shape[0] - self.config['SLIDING_WIN_SIZE'])
+                ruttr = wav[rix:rix + self.config['SLIDING_WIN_SIZE'], :]
+                rand_uttrs.append(torch.Tensor(ruttr))
+            # rand_uttrs_accs.append(torch.Tensor(rand_uttrs))
+            rand_uttrs_accs.extend(rand_uttrs)
+        return rand_uttrs_accs
+
+    def __getitem__(self, ix=0):
+
+        rand_uttrs = torch.stack(self._get_acc_uttrs())
+        return rand_uttrs
+
+
+    def collate(self, data):
+        pass
+
+
 if __name__ == "__main__":
-    strcuture()
+    # strcuture()
+    hdf5d = HDF5TorchDataset('gmu_4')
+    loader = data.DataLoader(hdf5d, 1)
+    for y in loader:
+        print(y[0].shape)
+        break
