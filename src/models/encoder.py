@@ -53,6 +53,10 @@ class ACCENT_ENCODER(nn.Module):
                             batch_first=True)
         self.linear1 = nn.Linear(self.config_yml['HIDDEN_SIZE'],
                                  self.config_yml['EMBEDDING_SIZE'])
+
+        self.linear2 = nn.Linear(self.config_yml['BATCH_SIZE'],
+                                 self.config_yml['BATCH_SIZE']) 
+
         self.dropout = nn.Dropout()
         self.relu = nn.ReLU()
         self.softmax = torch.nn.Softmax()
@@ -90,9 +94,24 @@ class ACCENT_ENCODER(nn.Module):
         pass
 
     def loss_fn(self, loss_, embdeds):
-        #TODO
-        # ce_loss = loss_(acts, targets)
-        pass
+        centroids = {}
+        emb_size = 1
+        simililarity_matrix = []
+    
+        for i,emb_vec in enumerate(embdeds.reshape(4,embdeds.shape[0]//4,-1)):
+            emb_size = emb_vec.shape[0]*emb_vec.shape[1]
+            centroids[i] = torch.mean(emb_vec, dim=0) 
+
+        cent_calc = lambda emb, cent : ((cent*emb_size)-emb)/(emb_size-1)
+        for i,emb in enumerate(embdeds):
+            simililarity_matrix.append([torch.cosine_similarity(emb.unsqueeze(0),cent_calc(emb.T, centroids[int(c)].unsqueeze(0))) for c in centroids.keys()])
+        simililarity_matrix = torch.tensor(simililarity_matrix).T
+        simililarity_matrix = self.linear2(simililarity_matrix).T
+        target_matrix = torch.range(0,3)
+        target_matrix = torch.repeat_interleave(target_matrix, embdeds.shape[0]//4).long()
+        loss = loss_(simililarity_matrix, target_matrix) 
+        print(loss)
+        return loss
 
     def train_loop(self,
                    opt,
@@ -166,6 +185,7 @@ class ACCENT_ENCODER(nn.Module):
 if __name__ == "__main__":
 
     encoder = ACCENT_ENCODER(dataset='gmu_4')
+    print(encoder)
     optimizer = torch.optim.Adadelta(encoder.parameters(), lr=1.0, rho=0.95)
     loss_ = torch.nn.CrossEntropyLoss()
     # lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
