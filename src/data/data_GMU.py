@@ -16,6 +16,7 @@ import h5py
 from data_utils import preprocess, mel_spectogram, structure, write_hdf5
 from random import sample,shuffle
 import numpy as np
+import soundfile
 
 warnings.filterwarnings("ignore")
 
@@ -81,7 +82,7 @@ def preprocess_GMU():
     speakers_info['filename'] = speakers_info['filename'].apply(
         lambda fname: os.path.join(GMU_DATA, fname + AUDIO_READ_FORMAT))
 
-    count = 888
+    count = 800
     
     shuffle_ixs = list(range(len(speakers_info['filename'].tolist())))
     shuffle(shuffle_ixs)

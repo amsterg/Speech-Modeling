@@ -145,7 +145,7 @@ def mel_spectogram(aud):
                                          n_fft=N_FFT,
                                          hop_length=H_L,
                                          n_mels=MEL_CHANNELS)
-    mel = np.log10(mel)
+    mel = np.log10(mel+1e-5)
     return mel
 
 

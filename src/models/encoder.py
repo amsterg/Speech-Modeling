@@ -15,7 +15,11 @@ sys.path.append(os.getcwd())
 from src.data.data_utils import HDF5TorchDataset
 import matplotlib.pyplot as plt
 import librosa
+from src.data.data_utils import mel_spectogram, preprocess
 np.random.seed(42)
+from scipy.optimize import brentq
+from scipy.interpolate import interp1d
+from sklearn.metrics import roc_curve
 
 
 class ACCENT_ENCODER(nn.Module):
@@ -117,7 +121,7 @@ class ACCENT_ENCODER(nn.Module):
         targets = torch.range(0, 3).repeat_interleave(
             self.config_yml['UTTR_COUNT']).long().to(device=self.device)
         ce_loss = loss_(sim_matrix, targets)
-        return ce_loss
+        return ce_loss, sim_matrix
 
     def train_loop(self,
                    opt,
@@ -128,11 +132,13 @@ class ACCENT_ENCODER(nn.Module):
 
         train_iterator = torch.utils.data.DataLoader(self.dataset_train,
                                                      batch_size=batch_size,
-                                                     shuffle=True)
+                                                     shuffle=True,
+                                                     drop_last=True)
 
         self.val_iterator = torch.utils.data.DataLoader(self.dataset_val,
                                                         batch_size=batch_size,
-                                                        shuffle=True)
+                                                        shuffle=True,
+                                                        drop_last=True)
 
         if self.load_model:
             model_pickle = torch.load(self.model_save_string.format(
@@ -153,7 +159,8 @@ class ACCENT_ENCODER(nn.Module):
                 opt.zero_grad()
 
                 embeds = self.forward(data)
-                loss = self.loss_fn(loss_, embeds)
+                loss, sim_matrix = self.loss_fn(loss_, embeds)
+
                 loss.backward()
 
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
@@ -162,6 +169,8 @@ class ACCENT_ENCODER(nn.Module):
                 if epoch % 10 == 0:
                     self.writer.add_scalar('Loss', loss.data.item(), epoch)
                     self.writer.add_scalar('Val Loss', self.val_loss(), epoch)
+                    self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
+                    # self.writer.add_histogram('sim', sim_matrix, epoch)
 
                     torch.save(
                         {
@@ -171,11 +180,32 @@ class ACCENT_ENCODER(nn.Module):
                             'loss': loss,
                         }, self.model_save_string.format(epoch))
 
-    def infer(self, uttrs):
+    def embed(self, aud):
+
+        mel = mel_spectogram(aud)  #preprocessed audio
+        part_frames = []
+        for ix in range(
+                0, mel.shape[1] - self.config_yml['SLIDING_WIN_SIZE'],
+                int(self.config_yml['SLIDING_WIN_SIZE'] *
+                    self.config_yml['SLIDING_WIN_OVERLAP'])):
+            part_frame = mel[:, ix:ix + self.config_yml['SLIDING_WIN_SIZE']]
+            part_frames.append(part_frame)
+
+        frames = np.stack(part_frames)
+        frames = torch.Tensor(frames).view(
+            -1,
+            self.config_yml['SLIDING_WIN_SIZE'],
+            self.config_yml['MEL_CHANNELS'],
+        ).to(device=self.device)
         model_pickle = torch.load(self.model_save_string.format(self.epoch))
         self.load_state_dict(model_pickle['model_state_dict'])
-
-        embeds = self.forward(uttrs).data.numpy()
+        with torch.no_grad():
+            self.eval()
+            embeds = self.forward(frames)  #.cpu().data.numpy()
+            embeds = embeds * torch.reciprocal(
+                torch.norm(embeds, dim=1, keepdim=True))
+            embeds = torch.mean(embeds, dim=0)
+            embeds = embeds.cpu().data.numpy()
 
         return embeds
 
@@ -188,16 +218,41 @@ class ACCENT_ENCODER(nn.Module):
             #TODO
         return (acc / ix)
 
+    def eer(self, sim_matrix=None):
+        with torch.no_grad():
+
+            targets = F.one_hot(
+                torch.arange(0, self.config_yml['ACC_COUNT']),
+                num_classes=self.config_yml['ACC_COUNT']).repeat_interleave(
+                    self.config_yml['UTTR_COUNT'], 1).long().T
+
+            fpr, tpr, thresholds = roc_curve(
+                targets.flatten(),
+                sim_matrix.detach().flatten().cpu().numpy())
+
+            eer = brentq(lambda x: 1. - x - interp1d(fpr, tpr)(x), 0., 1.)
+            # thresh = interp1d(fpr, thresholds)(eer)
+
+        return eer
+
     def val_loss(self):
         with torch.no_grad():
-            return self.loss_fn(
-                self.loss_,
-                self.forward(
-                    next(iter(self.val_iterator)).view(
-                        -1,
-                        self.config_yml['SLIDING_WIN_SIZE'],
-                        self.config_yml['MEL_CHANNELS'],
-                    )))
+            val_loss = []
+
+            for ix, datum in enumerate(self.val_iterator):
+                val_loss.append(
+                    self.loss_fn(
+                        self.loss_,
+                        self.forward(
+                            datum.view(
+                                -1,
+                                self.config_yml['SLIDING_WIN_SIZE'],
+                                self.config_yml['MEL_CHANNELS'],
+                            )))[0])
+                if ix == self.config_yml['VAL_LOSS_COUNT']:
+                    break
+
+        return torch.mean(torch.stack(val_loss)).data.item()
 
 
 if __name__ == "__main__":
