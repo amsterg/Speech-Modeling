@@ -13,7 +13,10 @@ from colorama import Fore
 from tqdm import tqdm
 import warnings
 import h5py
-from data_utils import preprocess, mel_spectogram, structure
+from data_utils import preprocess, mel_spectogram, structure, write_hdf5
+from random import sample,shuffle
+import numpy as np
+
 warnings.filterwarnings("ignore")
 
 with open('src/config.yaml', 'r') as f:
@@ -31,8 +34,10 @@ AUDIO_WRITE_FORMAT = config['AUDIO_WRITE_FORMAT']
 AUDIO_READ_FORMAT = config['AUDIO_READ_FORMAT']
 
 GMU_INT_DIR = GMU_DATA.replace(RAW_DATA_DIR, INTERIM_DATA_DIR)
-GMU_PROC_OUT_FILE = os.path.join(PROC_DATA_DIR,
-                                 'gmu_{}.hdf5'.format(GMU_ACCENT_COUNT))
+GMU_PROC_OUT_FILE_T = os.path.join(
+    PROC_DATA_DIR, 'gmu_{}_train.hdf5'.format(GMU_ACCENT_COUNT))
+GMU_PROC_OUT_FILE_VAL = os.path.join(
+    PROC_DATA_DIR, 'gmu_{}_val.hdf5'.format(GMU_ACCENT_COUNT))
 
 dirs_ = set([globals()[d] for d in globals() if d.__contains__('DIR')])
 
@@ -75,12 +80,20 @@ def preprocess_GMU():
     speakers_info['name'] = speakers_info['filename']
     speakers_info['filename'] = speakers_info['filename'].apply(
         lambda fname: os.path.join(GMU_DATA, fname + AUDIO_READ_FORMAT))
-    count = 0
-    fnames = speakers_info['filename'].tolist()[count:]
-    langs = speakers_info['native_language'].tolist()[count:]
-    names = speakers_info['name'].tolist()[count:]
 
-    mel_spects_ = {lang: [] for lang in langs}
+    count = 888
+    
+    shuffle_ixs = list(range(len(speakers_info['filename'].tolist())))
+    shuffle(shuffle_ixs)
+    fnames = np.array(speakers_info['filename'].tolist())[shuffle_ixs][count:].tolist()
+    langs = np.array(speakers_info['native_language'].tolist())[shuffle_ixs][count:].tolist()
+    names = np.array(speakers_info['name'].tolist())[shuffle_ixs][count:].tolist()
+    train_names = sample(names, int(0.8 * len(names)))
+    val_names = set(names) - set(train_names)
+
+    mels_train = {lang: [] for lang in langs}
+    mels_val = {lang: [] for lang in langs}
+
     for name, fname, lang in tqdm(zip(names, fnames, langs),
                                   total=len(langs),
                                   bar_format="{l_bar}%s{bar}%s{r_bar}" %
@@ -89,24 +102,23 @@ def preprocess_GMU():
             aud = preprocess(fname)
         except AssertionError as e:
             print("Couldn't process ", len(aud), fname)
+
         # file_out_ = fname.split('.')[0].replace(
         #     RAW_DATA_DIR, INTERIM_DATA_DIR) + '_' + AUDIO_WRITE_FORMAT
 
         # soundfile.write(file_out_, aud, SAMPLING_RATE)
 
-        mel = mel_spectogram(aud).T
+        mel = mel_spectogram(aud)
+        if mel.shape[1] <= config['SLIDING_WIN_SIZE']:
+            print("Couldn't process ", mel.shape, fname)
+            continue
+        if name in val_names:
+            mels_val[lang].append((name, mel))
+        else:
+            mels_train[lang].append((name, mel))
 
-        mel_spects_[lang].append((name, mel))
-
-
-    gmu_proc_file = h5py.File(GMU_PROC_OUT_FILE, 'w')
-    for lang in mel_spects_:
-        lang_group = gmu_proc_file.create_group(lang)
-        for mel in mel_spects_[lang]:
-            lang_group.create_dataset("mel_spects_{}".format(mel[0]),
-                                      data=mel[1])
-
-    gmu_proc_file.close()
+    write_hdf5(GMU_PROC_OUT_FILE_T, mels_train)
+    write_hdf5(GMU_PROC_OUT_FILE_VAL, mels_val)
 
 
 if __name__ == "__main__":

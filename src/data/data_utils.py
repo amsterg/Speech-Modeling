@@ -42,6 +42,8 @@ AUDIO_READ_FORMAT = config['AUDIO_READ_FORMAT']
 SAMPLING_RATE = config['SAMPLING_RATE']
 WINDOW_SIZE = config['WINDOW_SIZE']
 WINDOW_STEP = config['WINDOW_STEP']
+N_FFT = int(WINDOW_SIZE * SAMPLING_RATE / 1000)
+H_L = int(WINDOW_STEP * SAMPLING_RATE / 1000)
 MEL_CHANNELS = config['MEL_CHANNELS']
 SMOOTHING_LENGTH = config['SMOOTHING_LENGTH']
 SMOOTHING_WSIZE = config['SMOOTHING_WSIZE']
@@ -140,9 +142,10 @@ def mel_spectogram(aud):
     """
     mel = librosa.feature.melspectrogram(aud,
                                          sr=SAMPLING_RATE,
-                                         n_fft=WINDOW_SIZE,
-                                         hop_length=WINDOW_STEP,
+                                         n_fft=N_FFT,
+                                         hop_length=H_L,
                                          n_mels=MEL_CHANNELS)
+    mel = np.log10(mel)
     return mel
 
 
@@ -156,43 +159,58 @@ class HDF5TorchDataset(data.Dataset):
         self.device = device
 
     def __len__(self):
-        return 10000000
+        return len(self.accents) + int(1e4)
 
     def _get_acc_uttrs(self):
-        tensors = []
-        rand_wavs = [
-            sample(list(self.hdf5_file[accent].values()), 1)[0]
-            for accent in self.accents
-        ]
-        rand_uttrs_accs = []
+        while True:
+            rand_accent = sample(list(self.accents), 1)[0]
+            if self.hdf5_file[rand_accent].__len__() > 0:
+                break
+        wavs = list(self.hdf5_file[rand_accent])
+        while len(wavs) < self.config['UTTR_COUNT']:
+            wavs.extend(sample(wavs, 1))
+        
+        rand_wavs = sample(wavs, self.config['UTTR_COUNT'])
         rand_uttrs = []
-
         for wav in rand_wavs:
-            rand_uttrs = []
-            for _ in range(self.config['UTTR_COUNT']):
+            wav_ = self.hdf5_file[rand_accent][wav]
+            rix = randint(0, wav_.shape[1] - self.config['SLIDING_WIN_SIZE'])
 
-                rix = randint(0,
-                              wav.shape[0] - self.config['SLIDING_WIN_SIZE'])
-                ruttr = wav[rix:rix + self.config['SLIDING_WIN_SIZE'], :]
-                rand_uttrs.append(torch.Tensor(ruttr))
-            # rand_uttrs_accs.append(torch.Tensor(rand_uttrs))
-            rand_uttrs_accs.extend(rand_uttrs)
-        return rand_uttrs_accs
+            ruttr = wav_[:, rix:rix + self.config['SLIDING_WIN_SIZE']]
+            ruttr = torch.Tensor(ruttr)
+            rand_uttrs.append(ruttr)
+        return rand_uttrs
 
     def __getitem__(self, ix=0):
 
-        rand_uttrs = torch.stack(self._get_acc_uttrs())
-        return rand_uttrs
-
+        return torch.stack(self._get_acc_uttrs()).transpose(
+            1, 2).to(device=self.device)
 
     def collate(self, data):
         pass
 
 
+def write_hdf5(out_file, data):
+    """
+    Summary:
+    
+    Args:
+    
+    Returns:
+    
+    """
+    gmu_proc_file = h5py.File(out_file, 'w')
+    for g in data:
+        group = gmu_proc_file.create_group(g)
+        for datum in data[g]:
+            group.create_dataset("mel_spects_{}".format(datum[0]), data=datum[1])
+    gmu_proc_file.close()
+
+
 if __name__ == "__main__":
-    # strcuture()
-    hdf5d = HDF5TorchDataset('gmu_4')
-    loader = data.DataLoader(hdf5d, 1)
+    strcuture()
+    hdf5d = HDF5TorchDataset('gmu_4_train')
+    loader = data.DataLoader(hdf5d, 4)
     for y in loader:
-        print(y[0].shape)
+        print(y.shape)
         break
