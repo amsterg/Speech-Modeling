@@ -165,20 +165,23 @@ class ACCENT_ENCODER(nn.Module):
 
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
                 opt.step()
+                self.writer.add_scalar('Loss', loss.data.item(), epoch)
+                self.writer.add_scalar('Val Loss', self.val_loss(), epoch)
+                self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
+                
+            if epoch % 10 == 0:
+                # self.writer.add_scalar('Loss', loss.data.item(), epoch)
+                # self.writer.add_scalar('Val Loss', self.val_loss(), epoch)
+                # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
+                # self.writer.add_histogram('sim', sim_matrix, epoch)
 
-                if epoch % 10 == 0:
-                    self.writer.add_scalar('Loss', loss.data.item(), epoch)
-                    self.writer.add_scalar('Val Loss', self.val_loss(), epoch)
-                    self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
-                    # self.writer.add_histogram('sim', sim_matrix, epoch)
-
-                    torch.save(
-                        {
-                            'epoch': epoch,
-                            'model_state_dict': self.state_dict(),
-                            'optimizer_state_dict': opt.state_dict(),
-                            'loss': loss,
-                        }, self.model_save_string.format(epoch))
+                torch.save(
+                    {
+                        'epoch': epoch,
+                        'model_state_dict': self.state_dict(),
+                        'optimizer_state_dict': opt.state_dict(),
+                        'loss': loss,
+                    }, self.model_save_string.format(epoch))
 
     def embed(self, aud):
 
