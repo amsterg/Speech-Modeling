@@ -12,7 +12,17 @@ GMU_DATA_PACKED : 'data/raw/speech-accent-archive.zip'
 GMU_DATA_INFO : 'data/raw/speech-accent-archive/speakers_all.csv'
 GMU_DATA : 'data/raw/speech-accent-archive/recordings/recordings/'
 GMU_ACCENT_COUNT : 4
-AUDIO_READ_FORMAT : '.mp3'
+AUDIO_READ_FORMAT_GMU : '.mp3'
+
+
+TIMIT_DATA_PACKED : 'data/raw/TIMIT.zip'
+TIMIT_DATA_INFO : 'data/raw/TIMIT/README.DOC'
+TIMIT_DATA_TRAIN : 'data/raw/TIMIT/TRAIN'
+TIMIT_DATA_TEST : 'data/raw/TIMIT/TEST'
+TIMIT_ACCENT_COUNT : 8
+AUDIO_READ_FORMAT_TIMIT : '.WAV'
+VAD_MODE : 2
+
 AUDIO_WRITE_FORMAT : '.wav'
 SAMPLING_RATE : 16000 #Hz
 WINDOW_SIZE : 25 #ms
@@ -21,13 +31,13 @@ MEL_CHANNELS : 40
 SMOOTHING_WSIZE : 30
 SMOOTHING_LENGTH : 6
 DBFS : -30
-HIDDEN_SIZE : 128
-EMBEDDING_SIZE : 64
+HIDDEN_SIZE : 256
+EMBEDDING_SIZE : 256
 PROJECTION_SIZE : 64
 NUM_LAYERS : 3
 SLIDING_WIN_SIZE : 160 # frames
 SLIDING_WIN_OVERLAP : 0.5
 UTTR_COUNT : 5
-ACC_COUNT : 4
-BATCH_SIZE : 20 # 4 accents total 8x4=32 tensors
+ACC_COUNT : 8
+BATCH_SIZE : 40 # 4 accents total 8x4=32 tensors
 VAL_LOSS_COUNT : 1

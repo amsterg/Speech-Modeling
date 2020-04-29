@@ -20,6 +20,9 @@ np.random.seed(42)
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from sklearn.metrics import roc_curve
+import argparse
+
+from src.data.data_utils import heatmap, annotate_heatmap
 
 
 class ACCENT_ENCODER(nn.Module):
@@ -73,6 +76,7 @@ class ACCENT_ENCODER(nn.Module):
         self.load_model = load_model
         self.epoch = epoch
         self.loss_ = loss_
+        self.opt = None
 
     def forward(self, frames):
 
@@ -118,17 +122,37 @@ class ACCENT_ENCODER(nn.Module):
         sim_matrix = (self.W * cosim_matrix) + self.b
 
         sim_matrix = sim_matrix.view(self.config_yml['BATCH_SIZE'], -1)
-        targets = torch.range(0, 3).repeat_interleave(
-            self.config_yml['UTTR_COUNT']).long().to(device=self.device)
+        targets = torch.range(
+            0, self.config_yml['ACC_COUNT'] - 1).repeat_interleave(
+                self.config_yml['UTTR_COUNT']).long().to(device=self.device)
         ce_loss = loss_(sim_matrix, targets)
-        return ce_loss, sim_matrix
+
+        sig = torch.sigmoid(sim_matrix).to(device=self.device)
+        sig_mask = -(F.one_hot(torch.arange(0, self.config_yml['ACC_COUNT']),
+                               num_classes=self.config_yml['ACC_COUNT']).
+                     repeat_interleave(self.config_yml['UTTR_COUNT'],
+                                       1).long().T.to(device=self.device) - 1)
+        sig_ot = sig * sig_mask
+
+        sim_labels = torch.cat([
+            sim_matrix[c * self.config_yml['UTTR_COUNT']:(c + 1) *
+                       self.config_yml['UTTR_COUNT'], c:(c + 1)]
+            for c in range(lang_count)
+        ],
+                               dim=0)
+        sig_max, _ = torch.max(sig_ot, dim=1, keepdim=True)
+        contrast_loss = torch.sum(1 - torch.sigmoid(sim_labels) + sig_max)
+
+        loss = ce_loss + contrast_loss
+        return loss, sim_matrix
 
     def train_loop(self,
                    opt,
                    lr_scheduler,
                    loss_,
                    batch_size=1,
-                   gaze_pred=None):
+                   gaze_pred=None,
+                   cpt=0):
 
         train_iterator = torch.utils.data.DataLoader(self.dataset_train,
                                                      batch_size=batch_size,
@@ -141,12 +165,7 @@ class ACCENT_ENCODER(nn.Module):
                                                         drop_last=True)
 
         if self.load_model:
-            model_pickle = torch.load(self.model_save_string.format(
-                self.epoch))
-            self.load_state_dict(model_pickle['model_state_dict'])
-            opt.load_state_dict(model_pickle['model_state_dict'])
-            self.epoch = model_pickle['epoch']
-            loss_val = model_pickle['loss']
+            self.load_model_cpt(cpt=cpt)
 
         for epoch in range(self.epoch, 20000):
             for i, data in enumerate(train_iterator):
@@ -159,17 +178,17 @@ class ACCENT_ENCODER(nn.Module):
                 opt.zero_grad()
 
                 embeds = self.forward(data)
-                loss, sim_matrix = self.loss_fn(loss_, embeds)
+                self.loss, sim_matrix = self.loss_fn(loss_, embeds)
 
-                loss.backward()
+                self.loss.backward()
 
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
                 opt.step()
-                self.writer.add_scalar('Loss', loss.data.item(), epoch)
-                self.writer.add_scalar('Val Loss', self.val_loss(), epoch)
+                self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
+                self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
                 self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
-                
-            if epoch % 10 == 0:
+
+            if epoch % 1 == 0:
                 # self.writer.add_scalar('Loss', loss.data.item(), epoch)
                 # self.writer.add_scalar('Val Loss', self.val_loss(), epoch)
                 # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
@@ -180,7 +199,7 @@ class ACCENT_ENCODER(nn.Module):
                         'epoch': epoch,
                         'model_state_dict': self.state_dict(),
                         'optimizer_state_dict': opt.state_dict(),
-                        'loss': loss,
+                        'loss': self.loss,
                     }, self.model_save_string.format(epoch))
 
     def embed(self, aud):
@@ -200,7 +219,8 @@ class ACCENT_ENCODER(nn.Module):
             self.config_yml['SLIDING_WIN_SIZE'],
             self.config_yml['MEL_CHANNELS'],
         ).to(device=self.device)
-        model_pickle = torch.load(self.model_save_string.format(self.epoch))
+        model_pickle = torch.load(self.model_save_string.format(self.epoch),
+                                  map_location=self.device)
         self.load_state_dict(model_pickle['model_state_dict'])
         with torch.no_grad():
             self.eval()
@@ -257,17 +277,116 @@ class ACCENT_ENCODER(nn.Module):
 
         return torch.mean(torch.stack(val_loss)).data.item()
 
+    def load_model_cpt(self, cpt=0, opt=None, device=torch.device('cuda')):
+        self.epoch = cpt
+
+        model_pickle = torch.load(self.model_save_string.format(self.epoch),
+                                  map_location=device)
+        self.load_state_dict(model_pickle['model_state_dict'])
+        self.opt.load_state_dict(model_pickle['optimizer_state_dict'])
+        self.epoch = model_pickle['epoch']
+        self.loss = model_pickle['loss']
+        print("Loaded Model at epoch {},with loss {}".format(
+            self.epoch, self.loss))
+
+    def infer(self, fname, cpt):
+        aud = preprocess(fname)
+        embeds = encoder.embed(aud)
+        return embeds
+
+    def similarity(self, embed1, embed2):
+        sim = torch.cosine_similarity(
+            torch.tensor(embed1).unsqueeze(0),
+            torch.tensor(embed2).unsqueeze(0)).data.item()
+        # sim = embed1 @ embed2
+        return sim
+
+    def sim_matrix_infer(self, fnames, cpt):
+        sim_matrix = np.zeros((len(fnames), len(fnames)))
+        for i, f1 in enumerate(fnames):
+            for j, f2 in enumerate(fnames):
+                # if i==j:
+                #     sim_matrix[i, j] = 1
+                sim_matrix[i, j] = self.similarity(self.infer(f1, cpt),
+                                                   self.infer(f2, cpt))
+            # for i, f1 in enumerate(fnames):
+            #     for j, f2 in enumerate(fnames):
+            #         sim_matrix[i, j] = max(sim_matrix[i, j], sim_matrix[j, i])
+
+        return sim_matrix
+
+    def vis_sim_matrix(self, sim_matrix, labels):
+        fig, ax = plt.subplots()
+        labels = [l.split('/')[-1].split('.')[0].split('_')[0] for l in labels]
+
+        im, cbar = heatmap(sim_matrix,
+                           labels,
+                           labels,
+                           ax=ax,
+                           cmap="inferno",
+                           cbarlabel="Similarity")
+        # texts = annotate_heatmap(im, valfmt="{x:.1f} t")
+
+        fig.tight_layout()
+        plt.show()
+
 
 if __name__ == "__main__":
-    device = torch.device('cuda')
-    loss_ = torch.nn.CrossEntropyLoss()
-    encoder = ACCENT_ENCODER(dataset_train='gmu_4_train',
-                             dataset_val='gmu_4_val',
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device",
+                        help="cpu or cuda",
+                        default='cuda',
+                        choices=['cpu', 'cuda'])
+    parser.add_argument("--dataset_train",
+                        help="path to train_dataset",
+                        required=True)
+    parser.add_argument("--dataset_val",
+                        help="path to val_dataset",
+                        required=True)
+    parser.add_argument("--mode",
+                        help="train or eval",
+                        required=True,
+                        choices=['train', 'eval'])
+    parser.add_argument(
+        "--filedir",
+        help=
+        "dir with fnames to run similiarity eval,atleast 2, separted by a comma",
+        type=str)
+    parser.add_argument("--load_model",
+                        help="to load previously saved model checkpoint",
+                        default=False)
+    parser.add_argument(
+        "--cpt",
+        help="# of the save model cpt to load, only valid if valid_cpt is true"
+    )
+
+    args = parser.parse_args()
+
+    device = torch.device(args.device)
+    loss_ = torch.nn.CrossEntropyLoss(reduction='sum')
+    encoder = ACCENT_ENCODER(dataset_train=args.dataset_train,
+                             dataset_val=args.dataset_val,
                              device=device,
-                             loss_=loss_).to(device=device)
+                             loss_=loss_,
+                             load_model=args.load_model).to(device=device)
     optimizer = torch.optim.SGD(encoder.parameters(), lr=1e-2)
+    encoder.opt = optimizer
+    cpt = args.cpt
+    if args.load_model:
+        encoder.load_model_cpt(cpt=cpt, device=device)
     # lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
     #     optimizer, lr_lambda=lambda x: x*0.95)
     lr_scheduler = None
-    encoder.train_loop(optimizer, lr_scheduler, loss_, batch_size=4)
-    exit()
+    if args.mode == 'train':
+        encoder.train_loop(optimizer,
+                           lr_scheduler,
+                           loss_,
+                           batch_size=encoder.config_yml['ACC_COUNT'])
+    elif args.mode == 'eval':
+        fnames = [
+            os.path.join(args.filedir, x)
+            for x in sorted(os.listdir(args.filedir))
+        ]
+
+        sim_matrix = encoder.sim_matrix_infer(fnames, cpt)
+        encoder.vis_sim_matrix(sim_matrix, fnames)
