@@ -144,7 +144,7 @@ def mel_spectogram(aud):
                                          n_fft=N_FFT,
                                          hop_length=H_L,
                                          n_mels=MEL_CHANNELS)
-    mel = np.log10(mel+1e-5)
+    mel = np.log10(mel + 1e-5)
     return mel
 
 
@@ -168,9 +168,11 @@ class HDF5TorchDataset(data.Dataset):
         wavs = list(self.hdf5_file[rand_accent])
         while len(wavs) < self.config['UTTR_COUNT']:
             wavs.extend(sample(wavs, 1))
-        
+
         rand_wavs = sample(wavs, self.config['UTTR_COUNT'])
+        rand_accent_ix = list(self.accents).index(rand_accent)
         rand_uttrs = []
+        labels = []
         for wav in rand_wavs:
             wav_ = self.hdf5_file[rand_accent][wav]
             rix = randint(0, wav_.shape[1] - self.config['SLIDING_WIN_SIZE'])
@@ -178,12 +180,15 @@ class HDF5TorchDataset(data.Dataset):
             ruttr = wav_[:, rix:rix + self.config['SLIDING_WIN_SIZE']]
             ruttr = torch.Tensor(ruttr)
             rand_uttrs.append(ruttr)
-        return rand_uttrs
+            labels.append(rand_accent_ix)
+        return rand_uttrs, labels
 
     def __getitem__(self, ix=0):
-
-        return torch.stack(self._get_acc_uttrs()).transpose(
+        rand_uttrs, labels = self._get_acc_uttrs()
+        rand_uttrs = torch.stack(rand_uttrs).transpose(
             1, 2).to(device=self.device)
+        labels = torch.LongTensor(labels).to(device=self.device)
+        return rand_uttrs, labels
 
     def collate(self, data):
         pass
@@ -202,11 +207,18 @@ def write_hdf5(out_file, data):
     for g in data:
         group = gmu_proc_file.create_group(g)
         for datum in data[g]:
-            group.create_dataset("mel_spects_{}".format(datum[0]), data=datum[1])
+            group.create_dataset("mel_spects_{}".format(datum[0]),
+                                 data=datum[1])
     gmu_proc_file.close()
 
-def heatmap(data, row_labels, col_labels, ax=None,
-            cbar_kw={}, cbarlabel="", **kwargs):
+
+def heatmap(data,
+            row_labels,
+            col_labels,
+            ax=None,
+            cbar_kw={},
+            cbarlabel="",
+            **kwargs):
     """
     Create a heatmap from a numpy array and two lists of labels.
 
@@ -247,28 +259,32 @@ def heatmap(data, row_labels, col_labels, ax=None,
     ax.set_yticklabels(row_labels)
 
     # Let the horizontal axes labeling appear on top.
-    ax.tick_params(top=True, bottom=False,
-                   labeltop=True, labelbottom=False)
+    ax.tick_params(top=True, bottom=False, labeltop=True, labelbottom=False)
 
     # Rotate the tick labels and set their alignment.
-    plt.setp(ax.get_xticklabels(), rotation=-30, ha="right",
+    plt.setp(ax.get_xticklabels(),
+             rotation=-30,
+             ha="right",
              rotation_mode="anchor")
 
     # Turn spines off and create white grid.
     for edge, spine in ax.spines.items():
         spine.set_visible(False)
 
-    ax.set_xticks(np.arange(data.shape[1]+1)-.5, minor=True)
-    ax.set_yticks(np.arange(data.shape[0]+1)-.5, minor=True)
+    ax.set_xticks(np.arange(data.shape[1] + 1) - .5, minor=True)
+    ax.set_yticks(np.arange(data.shape[0] + 1) - .5, minor=True)
     ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
     ax.tick_params(which="minor", bottom=False, left=False)
 
     return im, cbar
 
 
-def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
+def annotate_heatmap(im,
+                     data=None,
+                     valfmt="{x:.2f}",
                      textcolors=("black", "white"),
-                     threshold=None, **textkw):
+                     threshold=None,
+                     **textkw):
     """
     A function to annotate a heatmap.
 
@@ -301,12 +317,11 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
     if threshold is not None:
         threshold = im.norm(threshold)
     else:
-        threshold = im.norm(data.max())/2.
+        threshold = im.norm(data.max()) / 2.
 
     # Set default alignment to center, but allow it to be
     # overwritten by textkw.
-    kw = dict(horizontalalignment="center",
-              verticalalignment="center")
+    kw = dict(horizontalalignment="center", verticalalignment="center")
     kw.update(textkw)
 
     # Get the formatter in case a string is supplied
@@ -323,6 +338,7 @@ def annotate_heatmap(im, data=None, valfmt="{x:.2f}",
             texts.append(text)
 
     return texts
+
 
 if __name__ == "__main__":
     structure()

@@ -88,7 +88,7 @@ def preprocess_GMU():
     speakers_info['filename'] = speakers_info['filename'].apply(
         lambda fname: os.path.join(GMU_DATA, fname + AUDIO_READ_FORMAT_GMU))
 
-    count = 0
+    count = -15
 
     shuffle_ixs = list(range(len(speakers_info['filename'].tolist())))
     shuffle(shuffle_ixs)
@@ -192,9 +192,10 @@ def preprocess_TIMIT(data_root, out_file):
 
 
 if __name__ == "__main__":
-    # preprocess_GMU()
     structure(dirs_)
-    preprocess_TIMIT(config['TIMIT_DATA_TRAIN'],
-                     out_file=TIMIT_PROC_OUT_FILE_TRAIN)
-    preprocess_TIMIT(config['TIMIT_DATA_TEST'],
-                     out_file=TIMIT_PROC_OUT_FILE_TEST)
+
+    preprocess_GMU()
+    # preprocess_TIMIT(config['TIMIT_DATA_TRAIN'],
+    #                  out_file=TIMIT_PROC_OUT_FILE_TRAIN)
+    # preprocess_TIMIT(config['TIMIT_DATA_TEST'],
+    #                  out_file=TIMIT_PROC_OUT_FILE_TEST)

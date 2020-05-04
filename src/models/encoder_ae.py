@@ -58,10 +58,27 @@ class ACCENT_ENCODER(nn.Module):
         self.dataset_train = HDF5TorchDataset(dataset_train, device=device)
         self.dataset_val = HDF5TorchDataset(dataset_val, device=device)
 
-        self.lstm = nn.LSTM(self.config_yml['MEL_CHANNELS'],
-                            self.config_yml['HIDDEN_SIZE'],
-                            self.config_yml['NUM_LAYERS'],
-                            batch_first=True)
+        self.encoder = nn.Sequential(
+            nn.Conv1d(self.config_yml['MEL_CHANNELS'], 32, 4, 2, 1),
+            nn.ReLU(True), nn.Conv1d(32, 32, 4, 2, 1), nn.ReLU(True),
+            nn.Conv1d(32, 64, 4, 2, 1), nn.ReLU(True),
+            nn.Conv1d(64, 64, 4, 2, 1), nn.ReLU(True),
+            nn.Conv1d(64, 256, 4, 1), nn.ReLU(True), nn.Linear(7, 1))
+
+        self.decoder = nn.Sequential(
+            nn.Linear(1, 7),
+            nn.ReLU(True),
+            nn.ConvTranspose1d(256, 64, 4),
+            nn.ReLU(True),
+            nn.ConvTranspose1d(64, 64, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose1d(64, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose1d(32, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose1d(32, self.config_yml['MEL_CHANNELS'], 4, 2, 1),
+        )
+
         self.linear1 = nn.Linear(self.config_yml['HIDDEN_SIZE'],
                                  self.config_yml['EMBEDDING_SIZE'])
         # self.linear2 = nn.Linear(1, 1)
@@ -77,82 +94,29 @@ class ACCENT_ENCODER(nn.Module):
         self.epoch = epoch
         self.loss_ = loss_
         self.opt = None
+        self.mce_loss = nn.MSELoss(reduction='mean')
         self.ce_loss = nn.CrossEntropyLoss(reduction='mean')
 
     def forward(self, frames):
 
-        x, (_, _) = self.lstm(frames)  #lstm out,hidden,
+        embs = self.encoder(frames)
+        x = self.decoder(embs)
 
-        x = x[:, -1]  #last layer -> embeds
+        return embs, x
 
-        x = self.linear1(x)
+    def loss_fn(self, embeds, data,recon, labels):
+        rcl = self.reconstruction_loss(data,recon)
+        dcl = self.direct_classification_loss(labels, embeds)
 
-        # x = self.relu(x)
+        loss = rcl + dcl
+        return loss
 
-        x = x * torch.reciprocal(torch.norm(x, dim=1, keepdim=True))
+    def reconstruction_loss(self, x, recon_x):
+        return self.mce_loss(x, recon_x)
 
-        return x
-
-    def loss_fn(self, loss_, embeds, labels):
-
-        lang_count = int(self.config_yml['BATCH_SIZE'] /
-                         self.config_yml['UTTR_COUNT'])
-        embeds3d = embeds.view(lang_count, self.config_yml['UTTR_COUNT'], -1)
-        dcl = self.direct_classification_loss(embeds, labels)
-        tl = self.triplet_loss(embeds3d)
-        print(tl)
-        exit()
-        centroids = torch.mean(embeds3d, dim=1)
-
-        centroids_neg = (torch.sum(embeds3d, dim=1, keepdim=True) -
-                         embeds3d) / (self.config_yml['UTTR_COUNT'] - 1)
-        cosim_neg = torch.cosine_similarity(embeds,
-                                            centroids_neg.view_as(embeds),
-                                            dim=1).view(lang_count, -1)
-        centroids = centroids.repeat(
-            lang_count * self.config_yml['UTTR_COUNT'], 1)
-
-        embeds2de = embeds.unsqueeze(1).repeat_interleave(lang_count, 1).view(
-            -1, self.config_yml['EMBEDDING_SIZE'])
-        cosim = torch.cosine_similarity(embeds2de, centroids)
-        cosim_matrix = cosim.view(lang_count, self.config_yml['UTTR_COUNT'],
-                                  -1)
-        neg_ix = list(range(lang_count))
-
-        # print(cosim_matrix[neg_ix,:,neg_ix].shape)
-        cosim_matrix[neg_ix, :, neg_ix] = cosim_neg
-
-        # sim_matrix = self.linear2(cosim_matrix)
-        sim_matrix = (self.W * cosim_matrix) + self.b
-
-        sim_matrix = sim_matrix.view(self.config_yml['BATCH_SIZE'], -1)
-        targets = torch.range(
-            0, self.config_yml['ACC_COUNT'] - 1).repeat_interleave(
-                self.config_yml['UTTR_COUNT']).long().to(device=self.device)
-        ce_loss = loss_(sim_matrix, targets)
-
-        # sig = torch.sigmoid(sim_matrix).to(device=self.device)
-        # sig_mask = -(F.one_hot(torch.arange(0, self.config_yml['ACC_COUNT']),
-        #                        num_classes=self.config_yml['ACC_COUNT']).
-        #              repeat_interleave(self.config_yml['UTTR_COUNT'],
-        #                                1).long().T.to(device=self.device) - 1)
-        # sig_ot = sig * sig_mask
-
-        # sim_labels = torch.cat([
-        #     sim_matrix[c * self.config_yml['UTTR_COUNT']:(c + 1) *
-        #                self.config_yml['UTTR_COUNT'], c:(c + 1)]
-        #     for c in range(lang_count)
-        # ],
-        #                        dim=0)
-        # sig_max, _ = torch.max(sig_ot, dim=1, keepdim=True)
-        # contrast_loss = torch.sum(1 - torch.sigmoid(sim_labels) + sig_max)
-
-        loss = ce_loss  # + contrast_loss
-        return loss, sim_matrix
-
-    def direct_classification_loss(self, embeds, labels):
-        labels = labels.reshape(-1, 1).squeeze()
-        return self.ce_loss(embeds, labels)
+    def direct_classification_loss(self, labels, embeds):
+        labels = labels.reshape(-1,1)
+        return self.ce_loss(embeds,labels)
 
     def train_loop(self,
                    opt,
@@ -176,25 +140,26 @@ class ACCENT_ENCODER(nn.Module):
             self.load_model_cpt(cpt=cpt)
 
         for epoch in range(self.epoch, 20000):
-            for i, (data, labels) in enumerate(train_iterator):
+            for i, (data,labels) in enumerate(train_iterator):
+                
                 data = data.view(
                     -1,
-                    self.config_yml['SLIDING_WIN_SIZE'],
                     self.config_yml['MEL_CHANNELS'],
+                    self.config_yml['SLIDING_WIN_SIZE'],
                 )
-
                 opt.zero_grad()
+                embeds,recon = self.forward(data)
 
-                embeds = self.forward(data)
-                self.loss, sim_matrix = self.loss_fn(loss_, embeds, labels)
+                self.loss = self.loss_fn(embeds, data, recon,
+                                                     labels)
 
                 self.loss.backward()
 
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
                 opt.step()
                 self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
-                self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
-                self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
+                # self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
+                # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
 
             if epoch % 1 == 0:
                 # self.writer.add_scalar('Loss', loss.data.item(), epoch)
