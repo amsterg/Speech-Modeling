@@ -99,9 +99,7 @@ class ACCENT_ENCODER(nn.Module):
                          self.config_yml['UTTR_COUNT'])
         embeds3d = embeds.view(lang_count, self.config_yml['UTTR_COUNT'], -1)
         dcl = self.direct_classification_loss(embeds, labels)
-        tl = self.triplet_loss(embeds3d)
-        print(tl)
-        exit()
+
         centroids = torch.mean(embeds3d, dim=1)
 
         centroids_neg = (torch.sum(embeds3d, dim=1, keepdim=True) -
@@ -179,9 +177,9 @@ class ACCENT_ENCODER(nn.Module):
             for i, (data, labels) in enumerate(train_iterator):
                 data = data.view(
                     -1,
-                    self.config_yml['SLIDING_WIN_SIZE'],
                     self.config_yml['MEL_CHANNELS'],
-                )
+                    self.config_yml['SLIDING_WIN_SIZE'],
+                ).transpose(1, 2)
 
                 opt.zero_grad()
 
@@ -193,8 +191,8 @@ class ACCENT_ENCODER(nn.Module):
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
                 opt.step()
                 self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
-                self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
-                self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
+                # self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
+                # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
 
             if epoch % 1 == 0:
                 # self.writer.add_scalar('Loss', loss.data.item(), epoch)
@@ -270,16 +268,16 @@ class ACCENT_ENCODER(nn.Module):
         with torch.no_grad():
             val_loss = []
 
-            for ix, datum in enumerate(self.val_iterator):
+            for ix, (datum, labels) in enumerate(self.val_iterator):
                 val_loss.append(
                     self.loss_fn(
                         self.loss_,
                         self.forward(
                             datum.view(
                                 -1,
-                                self.config_yml['SLIDING_WIN_SIZE'],
                                 self.config_yml['MEL_CHANNELS'],
-                            )))[0])
+                                self.config_yml['SLIDING_WIN_SIZE'],
+                            ).transpose(1, 2)),labels)[0])
                 if ix == self.config_yml['VAL_LOSS_COUNT']:
                     break
 

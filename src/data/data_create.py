@@ -118,7 +118,7 @@ def preprocess_GMU():
         #     RAW_DATA_DIR, INTERIM_DATA_DIR) + '_' + AUDIO_WRITE_FORMAT
 
         # soundfile.write(file_out_, aud, SAMPLING_RATE)
-
+        
         mel = mel_spectogram(aud)
         if mel.shape[1] <= config['SLIDING_WIN_SIZE']:
             print("Couldn't process ", mel.shape, fname)

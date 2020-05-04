@@ -21,11 +21,13 @@ from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from sklearn.metrics import roc_curve
 import argparse
+import torchvision
+import soundfile
 
 from src.data.data_utils import heatmap, annotate_heatmap
 
 
-class ACCENT_ENCODER(nn.Module):
+class ACCENT_ENCODER_AE(nn.Module):
     def __init__(self,
                  input_shape=(160, 40),
                  load_model=False,
@@ -34,7 +36,7 @@ class ACCENT_ENCODER(nn.Module):
                  dataset_val='gmu_4_val',
                  device=torch.device('cpu'),
                  loss_=None):
-        super(ACCENT_ENCODER, self).__init__()
+        super(ACCENT_ENCODER_AE, self).__init__()
         self.input_shape = input_shape
         with open('src/config.yaml', 'r') as f:
             self.config_yml = safe_load(f.read())
@@ -63,11 +65,11 @@ class ACCENT_ENCODER(nn.Module):
             nn.ReLU(True), nn.Conv1d(32, 32, 4, 2, 1), nn.ReLU(True),
             nn.Conv1d(32, 64, 4, 2, 1), nn.ReLU(True),
             nn.Conv1d(64, 64, 4, 2, 1), nn.ReLU(True),
-            nn.Conv1d(64, 256, 4, 1), nn.ReLU(True), nn.Linear(7, 1))
+            nn.Conv1d(64, 256, 4, 1), nn.ReLU(True)#, nn.Linear(7, 1)
+            )
 
         self.decoder = nn.Sequential(
-            nn.Linear(1, 7),
-            nn.ReLU(True),
+            # nn.Linear(1, 7),
             nn.ConvTranspose1d(256, 64, 4),
             nn.ReLU(True),
             nn.ConvTranspose1d(64, 64, 4, 2, 1),
@@ -96,6 +98,7 @@ class ACCENT_ENCODER(nn.Module):
         self.opt = None
         self.mce_loss = nn.MSELoss(reduction='mean')
         self.ce_loss = nn.CrossEntropyLoss(reduction='mean')
+        self.bce_loss = nn.BCEWithLogitsLoss(reduction='mean')
 
     def forward(self, frames):
 
@@ -104,19 +107,19 @@ class ACCENT_ENCODER(nn.Module):
 
         return embs, x
 
-    def loss_fn(self, embeds, data,recon, labels):
-        rcl = self.reconstruction_loss(data,recon)
+    def loss_fn(self, embeds, data, recon, labels):
+        rcl = 10*self.reconstruction_loss(data, recon)
         dcl = self.direct_classification_loss(labels, embeds)
 
-        loss = rcl + dcl
-        return loss
+        return rcl, dcl
 
     def reconstruction_loss(self, x, recon_x):
-        return self.mce_loss(x, recon_x)
+        return self.mce_loss(recon_x, x)
+        # return self.bce_loss(recon_x,x)
 
     def direct_classification_loss(self, labels, embeds):
-        labels = labels.reshape(-1,1)
-        return self.ce_loss(embeds,labels)
+        labels = labels.reshape(-1, 1)
+        return self.ce_loss(embeds, labels)
 
     def train_loop(self,
                    opt,
@@ -140,26 +143,29 @@ class ACCENT_ENCODER(nn.Module):
             self.load_model_cpt(cpt=cpt)
 
         for epoch in range(self.epoch, 20000):
-            for i, (data,labels) in enumerate(train_iterator):
-                
+            for i, (data, labels) in enumerate(train_iterator):
+
                 data = data.view(
                     -1,
                     self.config_yml['MEL_CHANNELS'],
                     self.config_yml['SLIDING_WIN_SIZE'],
                 )
                 opt.zero_grad()
-                embeds,recon = self.forward(data)
+                embeds, recon = self.forward(data)
 
-                self.loss = self.loss_fn(embeds, data, recon,
-                                                     labels)
-
+                rcl, dcl = self.loss_fn(embeds, data, recon, labels)
+                self.loss = rcl + dcl
                 self.loss.backward()
 
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
                 opt.step()
-                self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
+                # self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
+                self.writer.add_scalar('rcl', rcl.data.item(), epoch)
+                self.writer.add_scalar('dcl', dcl.data.item(), epoch)
                 # self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
                 # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
+                if i % 1000 == 0:
+                    self.save_recon(recon, data, epoch)
 
             if epoch % 1 == 0:
                 # self.writer.add_scalar('Loss', loss.data.item(), epoch)
@@ -175,6 +181,24 @@ class ACCENT_ENCODER(nn.Module):
                         'loss': self.loss,
                     }, self.model_save_string.format(epoch))
 
+    def save_recon(self, recon, data, epoch):
+        self.griffin_lim_aud(recon[-1].data.numpy())
+        
+
+    def griffin_lim_aud(self, spec):
+        y = librosa.feature.inverse.mel_to_audio(
+            spec,
+            sr=self.config_yml['SAMPLING_RATE'],
+            n_fft=1024,
+            hop_length=256,
+            win_length=1024)
+
+        soundfile.write(os.path.join(self.config_yml['VIS_PREDS_DIR'],
+                                     '{}.wav'.format(self.epoch)),
+                        y,
+                        samplerate=self.config_yml['SAMPLING_RATE'])
+        return y
+
     def embed(self, aud):
 
         mel = mel_spectogram(aud)  #preprocessed audio
@@ -189,15 +213,17 @@ class ACCENT_ENCODER(nn.Module):
         frames = np.stack(part_frames)
         frames = torch.Tensor(frames).view(
             -1,
-            self.config_yml['SLIDING_WIN_SIZE'],
             self.config_yml['MEL_CHANNELS'],
+            self.config_yml['SLIDING_WIN_SIZE'],
+
         ).to(device=self.device)
+
         model_pickle = torch.load(self.model_save_string.format(self.epoch),
                                   map_location=self.device)
         self.load_state_dict(model_pickle['model_state_dict'])
         with torch.no_grad():
             self.eval()
-            embeds = self.forward(frames)  #.cpu().data.numpy()
+            embeds,_ = self.forward(frames)  #.cpu().data.numpy()
             embeds = embeds * torch.reciprocal(
                 torch.norm(embeds, dim=1, keepdim=True))
             embeds = torch.mean(embeds, dim=0)
@@ -337,11 +363,11 @@ if __name__ == "__main__":
 
     device = torch.device(args.device)
     loss_ = torch.nn.CrossEntropyLoss(reduction='sum')
-    encoder = ACCENT_ENCODER(dataset_train=args.dataset_train,
-                             dataset_val=args.dataset_val,
-                             device=device,
-                             loss_=loss_,
-                             load_model=args.load_model).to(device=device)
+    encoder = ACCENT_ENCODER_AE(dataset_train=args.dataset_train,
+                                dataset_val=args.dataset_val,
+                                device=device,
+                                loss_=loss_,
+                                load_model=args.load_model).to(device=device)
     optimizer = torch.optim.SGD(encoder.parameters(), lr=1e-2)
     encoder.opt = optimizer
     cpt = args.cpt

@@ -144,7 +144,7 @@ def mel_spectogram(aud):
                                          n_fft=N_FFT,
                                          hop_length=H_L,
                                          n_mels=MEL_CHANNELS)
-    mel = np.log10(mel + 1e-5)
+    mel = np.log(mel + 1e-5)
     return mel
 
 
@@ -175,9 +175,11 @@ class HDF5TorchDataset(data.Dataset):
         labels = []
         for wav in rand_wavs:
             wav_ = self.hdf5_file[rand_accent][wav]
+            
             rix = randint(0, wav_.shape[1] - self.config['SLIDING_WIN_SIZE'])
 
             ruttr = wav_[:, rix:rix + self.config['SLIDING_WIN_SIZE']]
+            
             ruttr = torch.Tensor(ruttr)
             rand_uttrs.append(ruttr)
             labels.append(rand_accent_ix)
@@ -185,8 +187,7 @@ class HDF5TorchDataset(data.Dataset):
 
     def __getitem__(self, ix=0):
         rand_uttrs, labels = self._get_acc_uttrs()
-        rand_uttrs = torch.stack(rand_uttrs).transpose(
-            1, 2).to(device=self.device)
+        rand_uttrs = torch.stack(rand_uttrs).to(device=self.device)
         labels = torch.LongTensor(labels).to(device=self.device)
         return rand_uttrs, labels
 
