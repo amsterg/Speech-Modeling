@@ -159,10 +159,10 @@ class ACCENT_ENCODER_AE(nn.Module):
 
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
                 opt.step()
-                # self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
+                self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
                 self.writer.add_scalar('rcl', rcl.data.item(), epoch)
                 self.writer.add_scalar('dcl', dcl.data.item(), epoch)
-                # self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
+                self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
                 # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
                 if i % 1000 == 0:
                     self.save_recon(recon, data, epoch)
@@ -261,16 +261,19 @@ class ACCENT_ENCODER_AE(nn.Module):
         with torch.no_grad():
             val_loss = []
 
-            for ix, datum in enumerate(self.val_iterator):
-                val_loss.append(
-                    self.loss_fn(
-                        self.loss_,
-                        self.forward(
-                            datum.view(
+            for ix, (datum, labels) in enumerate(self.val_iterator):
+                datum = datum.view(
                                 -1,
-                                self.config_yml['SLIDING_WIN_SIZE'],
                                 self.config_yml['MEL_CHANNELS'],
-                            )))[0])
+                                self.config_yml['SLIDING_WIN_SIZE'],
+                            )
+                embeds, recon = self.forward(datum)
+
+                rcl, dcl = self.loss_fn(embeds, datum, recon, labels)
+                loss = rcl + dcl
+
+                val_loss.append(loss)
+
                 if ix == self.config_yml['VAL_LOSS_COUNT']:
                     break
 

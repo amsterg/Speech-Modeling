@@ -61,8 +61,9 @@ class ACCENT_ENCODER(nn.Module):
         self.lstm = nn.LSTM(self.config_yml['MEL_CHANNELS'],
                             self.config_yml['HIDDEN_SIZE'],
                             self.config_yml['NUM_LAYERS'],
-                            batch_first=True)
-        self.linear1 = nn.Linear(self.config_yml['HIDDEN_SIZE'],
+                            batch_first=True,
+                            bidirectional=True)
+        self.linear1 = nn.Linear(2*self.config_yml['HIDDEN_SIZE'],
                                  self.config_yml['EMBEDDING_SIZE'])
         # self.linear2 = nn.Linear(1, 1)
         # torch.nn.init.constant_(self.linear2.weight, 10.0)
@@ -80,12 +81,18 @@ class ACCENT_ENCODER(nn.Module):
         self.ce_loss = nn.CrossEntropyLoss(reduction='mean')
 
     def forward(self, frames):
-
+        # print(frames.shape)
+        
         x, (_, _) = self.lstm(frames)  #lstm out,hidden,
-
-        x = x[:, -1]  #last layer -> embeds
+        # print(x.shape)
+        # x = x[:, -1]  #last layer -> embeds
 
         x = self.linear1(x)
+        # print(x.shape)
+
+        x = torch.mean(x,dim=1)
+        # print(x.shape)
+        # exit()
 
         # x = self.relu(x)
 
@@ -145,8 +152,8 @@ class ACCENT_ENCODER(nn.Module):
         # sig_max, _ = torch.max(sig_ot, dim=1, keepdim=True)
         # contrast_loss = torch.sum(1 - torch.sigmoid(sim_labels) + sig_max)
 
-        loss = ce_loss  # + contrast_loss
-        return loss, sim_matrix
+        # loss = ce_loss  + dcl# + contrast_loss
+        return (ce_loss, dcl), sim_matrix
 
     def direct_classification_loss(self, embeds, labels):
         labels = labels.reshape(-1, 1).squeeze()
@@ -184,15 +191,21 @@ class ACCENT_ENCODER(nn.Module):
                 opt.zero_grad()
 
                 embeds = self.forward(data)
-                self.loss, sim_matrix = self.loss_fn(loss_, embeds, labels)
+                (ce_loss,
+                 dcl), sim_matrix = self.loss_fn(loss_, embeds, labels)
+                self.loss = ce_loss + dcl
 
                 self.loss.backward()
 
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 3.0)
+                
                 opt.step()
+                self.writer.add_scalar('ce_loss', ce_loss.data.item(), epoch)
+                self.writer.add_scalar('dcl', dcl.data.item(), epoch)
                 self.writer.add_scalar('Loss', self.loss.data.item(), epoch)
                 # self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
-                # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
+
+                self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
 
             if epoch % 1 == 0:
                 # self.writer.add_scalar('Loss', loss.data.item(), epoch)
@@ -269,15 +282,19 @@ class ACCENT_ENCODER(nn.Module):
             val_loss = []
 
             for ix, (datum, labels) in enumerate(self.val_iterator):
-                val_loss.append(
-                    self.loss_fn(
-                        self.loss_,
-                        self.forward(
-                            datum.view(
-                                -1,
-                                self.config_yml['MEL_CHANNELS'],
-                                self.config_yml['SLIDING_WIN_SIZE'],
-                            ).transpose(1, 2)),labels)[0])
+                datum = datum.view(
+                    -1,
+                    self.config_yml['MEL_CHANNELS'],
+                    self.config_yml['SLIDING_WIN_SIZE'],
+                ).transpose(1, 2)
+                embeds = self.forward(datum)
+
+                (ce_loss,
+                 dcl), sim_matrix = self.loss_fn(self.loss_, embeds, labels)
+                loss = ce_loss + dcl
+
+                val_loss.append(loss)
+
                 if ix == self.config_yml['VAL_LOSS_COUNT']:
                     break
 
