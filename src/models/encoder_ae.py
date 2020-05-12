@@ -25,7 +25,7 @@ import torchvision
 import soundfile
 
 from src.data.data_utils import heatmap, annotate_heatmap
-
+# from librosa.feature.inverse import mel_to_audio
 
 class ACCENT_ENCODER_AE(nn.Module):
     def __init__(self,
@@ -65,12 +65,12 @@ class ACCENT_ENCODER_AE(nn.Module):
             nn.ReLU(True), nn.Conv1d(32, 32, 4, 2, 1), nn.ReLU(True),
             nn.Conv1d(32, 64, 4, 2, 1), nn.ReLU(True),
             nn.Conv1d(64, 64, 4, 2, 1), nn.ReLU(True),
-            nn.Conv1d(64, 256, 4, 1), nn.ReLU(True)#, nn.Linear(7, 1)
+            nn.Conv1d(64, 5, 4, 1), nn.ReLU(True)#, nn.Linear(7, 1)
             )
 
         self.decoder = nn.Sequential(
             # nn.Linear(1, 7),
-            nn.ConvTranspose1d(256, 64, 4),
+            nn.ConvTranspose1d(5, 64, 4),
             nn.ReLU(True),
             nn.ConvTranspose1d(64, 64, 4, 2, 1),
             nn.ReLU(True),
@@ -108,8 +108,8 @@ class ACCENT_ENCODER_AE(nn.Module):
         return embs, x
 
     def loss_fn(self, embeds, data, recon, labels):
-        rcl = 10*self.reconstruction_loss(data, recon)
-        dcl = self.direct_classification_loss(labels, embeds)
+        rcl = self.reconstruction_loss(data, recon)
+        dcl = 10*self.direct_classification_loss(labels, embeds)
 
         return rcl, dcl
 
@@ -164,8 +164,8 @@ class ACCENT_ENCODER_AE(nn.Module):
                 self.writer.add_scalar('dcl', dcl.data.item(), epoch)
                 self.writer.add_scalar('ValLoss', self.val_loss(), epoch)
                 # self.writer.add_scalar('EER', self.eer(sim_matrix), epoch)
-                if i % 1000 == 0:
-                    self.save_recon(recon, data, epoch)
+                # if i % 1000 == 0:
+                #     self.save_recon(recon, data, epoch)
 
             if epoch % 1 == 0:
                 # self.writer.add_scalar('Loss', loss.data.item(), epoch)
@@ -181,23 +181,23 @@ class ACCENT_ENCODER_AE(nn.Module):
                         'loss': self.loss,
                     }, self.model_save_string.format(epoch))
 
-    def save_recon(self, recon, data, epoch):
-        self.griffin_lim_aud(recon[-1].data.numpy())
+    # def save_recon(self, recon, data, epoch):
+    #     self.griffin_lim_aud(recon[-1].cpu().data.numpy())
         
 
-    def griffin_lim_aud(self, spec):
-        y = librosa.feature.inverse.mel_to_audio(
-            spec,
-            sr=self.config_yml['SAMPLING_RATE'],
-            n_fft=1024,
-            hop_length=256,
-            win_length=1024)
+    # def griffin_lim_aud(self, spec):
+    #     y = mel_to_audio(
+    #         spec,
+    #         sr=self.config_yml['SAMPLING_RATE'],
+    #         n_fft=1024,
+    #         hop_length=256,
+    #         win_length=1024)
 
-        soundfile.write(os.path.join(self.config_yml['VIS_PREDS_DIR'],
-                                     '{}.wav'.format(self.epoch)),
-                        y,
-                        samplerate=self.config_yml['SAMPLING_RATE'])
-        return y
+    #     soundfile.write(os.path.join(self.config_yml['VIS_PREDS_DIR'],
+    #                                  '{}.wav'.format(self.epoch)),
+    #                     y,
+    #                     samplerate=self.config_yml['SAMPLING_RATE'])
+    #     return y
 
     def embed(self, aud):
 
@@ -228,7 +228,8 @@ class ACCENT_ENCODER_AE(nn.Module):
                 torch.norm(embeds, dim=1, keepdim=True))
             embeds = torch.mean(embeds, dim=0)
             embeds = embeds.cpu().data.numpy()
-
+            # plt.imshow(embeds)
+            # plt.show()
         return embeds
 
     def accuracy(self):
