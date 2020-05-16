@@ -17,7 +17,7 @@ Data Preparation
 
 Running Models
 ===================
-Run any of the model file directly, each has info regarding how to run it.
+Run any of the model file directly, each has info regarding how to run it. These files create an accent enocder model that generates accent embeddings. These can be plugged into a syntehsizer such as tacotron to generate accented voice.
 * Accent Encoder LSTM Model at [src/models/encoder.py](src/models/encoder.py)
 * Accent Encoder 1dConv Model at [src/models/encoder_conv.py](src/models/encoder_conv.py)
 * Accent Encoder LSTM Model wiht triplet loss at [src/models/encoder_trip.py](src/models/encoder_trip.py)
